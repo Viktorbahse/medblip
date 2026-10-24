@@ -92,3 +92,44 @@ dependencies = [
     "werkzeug==3.1.9",
     "yarl==1.25.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.7.0",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [
+    ".venv",
+    "__pycache__",
+    "output",
+    "weights",
+    "Original_BLIP",   # вендорный код — не трогаем
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (неиспользуемые импорты, переменные)
+    "I",   # isort (порядок импортов)
+    "B",   # flake8-bugbear (типичные баги)
+    "UP",  # pyupgrade (устаревший синтаксис)
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long — отдаём форматтеру
+    "B008",  # function call in default arg (бывает у Lightning callbacks)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"pretrain.py" = ["E402"]           # импорты не в начале (если есть sys.path hack)
+"data_utils.py" = ["B008"]         # дефолтные аргументы-функции
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

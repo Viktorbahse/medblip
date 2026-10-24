@@ -45,7 +45,7 @@ class BLIP_Pretrain(nn.Module):
 
         if vit == 'base':
             # Локальный путь к весам DeiT (скачан с Google Drive вручную)
-            ckpt_path = "/home/viktor/medblip/weights/deit_base_patch16_224.pth"
+            ckpt_path = "weights/deit_base_patch16_224.pth"
             if not os.path.exists(ckpt_path):
                 os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
                 gdown.download(
@@ -148,76 +148,76 @@ class BLIP_Pretrain(nn.Module):
             '',
             '/attention',
         )
-        
+
     def forward(self, image, caption, alpha):
         with torch.no_grad():
             self.temp.clamp_(0.001,0.5)
-        
-        image_embeds = self.visual_encoder(image) 
-        image_atts = torch.ones(image_embeds.size()[:-1],dtype=torch.long).to(image.device)        
-        image_feat = F.normalize(self.vision_proj(image_embeds[:,0,:]),dim=-1)          
-        
-        text = self.tokenizer(caption, padding='max_length', truncation=True, max_length=30, 
-                              return_tensors="pt").to(image.device)  
-        text_output = self.text_encoder(text.input_ids, attention_mask = text.attention_mask,                      
-                                        return_dict = True, mode = 'text')            
-        text_feat = F.normalize(self.text_proj(text_output.last_hidden_state[:,0,:]),dim=-1)                 
-             
+
+        image_embeds = self.visual_encoder(image)
+        image_atts = torch.ones(image_embeds.size()[:-1],dtype=torch.long).to(image.device)
+        image_feat = F.normalize(self.vision_proj(image_embeds[:,0,:]),dim=-1)
+
+        text = self.tokenizer(caption, padding='max_length', truncation=True, max_length=30,
+                              return_tensors="pt").to(image.device)
+        text_output = self.text_encoder(text.input_ids, attention_mask = text.attention_mask,
+                                        return_dict = True, mode = 'text')
+        text_feat = F.normalize(self.text_proj(text_output.last_hidden_state[:,0,:]),dim=-1)
+
         # get momentum features
         with torch.no_grad():
             self._momentum_update()
-            image_embeds_m = self.visual_encoder_m(image) 
-            image_feat_m = F.normalize(self.vision_proj_m(image_embeds_m[:,0,:]),dim=-1)  
-            image_feat_all = torch.cat([image_feat_m.t(),self.image_queue.clone().detach()],dim=1)                   
-            
-            text_output_m = self.text_encoder_m(text.input_ids, attention_mask = text.attention_mask,                      
-                                                return_dict = True, mode = 'text')    
-            text_feat_m = F.normalize(self.text_proj_m(text_output_m.last_hidden_state[:,0,:]),dim=-1) 
+            image_embeds_m = self.visual_encoder_m(image)
+            image_feat_m = F.normalize(self.vision_proj_m(image_embeds_m[:,0,:]),dim=-1)
+            image_feat_all = torch.cat([image_feat_m.t(),self.image_queue.clone().detach()],dim=1)
+
+            text_output_m = self.text_encoder_m(text.input_ids, attention_mask = text.attention_mask,
+                                                return_dict = True, mode = 'text')
+            text_feat_m = F.normalize(self.text_proj_m(text_output_m.last_hidden_state[:,0,:]),dim=-1)
             text_feat_all = torch.cat([text_feat_m.t(),self.text_queue.clone().detach()],dim=1)
 
-            sim_i2t_m = image_feat_m @ text_feat_all / self.temp  
-            sim_t2i_m = text_feat_m @ image_feat_all / self.temp 
+            sim_i2t_m = image_feat_m @ text_feat_all / self.temp
+            sim_t2i_m = text_feat_m @ image_feat_all / self.temp
 
             sim_targets = torch.zeros(sim_i2t_m.size()).to(image.device)
-            sim_targets.fill_diagonal_(1)          
+            sim_targets.fill_diagonal_(1)
 
             sim_i2t_targets = alpha * F.softmax(sim_i2t_m, dim=1) + (1 - alpha) * sim_targets
-            sim_t2i_targets = alpha * F.softmax(sim_t2i_m, dim=1) + (1 - alpha) * sim_targets        
+            sim_t2i_targets = alpha * F.softmax(sim_t2i_m, dim=1) + (1 - alpha) * sim_targets
 
         sim_i2t = image_feat @ text_feat_all / self.temp
         sim_t2i = text_feat @ image_feat_all / self.temp
-                             
+
         loss_i2t = -torch.sum(F.log_softmax(sim_i2t, dim=1)*sim_i2t_targets,dim=1).mean()
-        loss_t2i = -torch.sum(F.log_softmax(sim_t2i, dim=1)*sim_t2i_targets,dim=1).mean() 
+        loss_t2i = -torch.sum(F.log_softmax(sim_t2i, dim=1)*sim_t2i_targets,dim=1).mean()
 
         loss_ita = (loss_i2t+loss_t2i)/2
 
-        self._dequeue_and_enqueue(image_feat_m, text_feat_m)        
+        self._dequeue_and_enqueue(image_feat_m, text_feat_m)
 
         ###============== Image-text Matching ===================###
         encoder_input_ids = text.input_ids.clone()
         encoder_input_ids[:,0] = self.tokenizer.enc_token_id
-        
+
         # forward the positve image-text pair
         bs = image.size(0)
         output_pos = self.text_encoder(encoder_input_ids,
                                        attention_mask = text.attention_mask,
                                        encoder_hidden_states = image_embeds,
-                                       encoder_attention_mask = image_atts,      
+                                       encoder_attention_mask = image_atts,
                                        return_dict = True,
-                                      )            
-        with torch.no_grad():       
-            weights_t2i = F.softmax(sim_t2i[:,:bs],dim=1)+1e-4 
-            weights_t2i.fill_diagonal_(0)            
-            weights_i2t = F.softmax(sim_i2t[:,:bs],dim=1)+1e-4  
-            weights_i2t.fill_diagonal_(0)   
-            
+                                      )
+        with torch.no_grad():
+            weights_t2i = F.softmax(sim_t2i[:,:bs],dim=1)+1e-4
+            weights_t2i.fill_diagonal_(0)
+            weights_i2t = F.softmax(sim_i2t[:,:bs],dim=1)+1e-4
+            weights_i2t.fill_diagonal_(0)
+
         # select a negative image for each text
-        image_embeds_neg = []    
+        image_embeds_neg = []
         for b in range(bs):
             neg_idx = torch.multinomial(weights_t2i[b], 1).item()
             image_embeds_neg.append(image_embeds[neg_idx])
-        image_embeds_neg = torch.stack(image_embeds_neg,dim=0)   
+        image_embeds_neg = torch.stack(image_embeds_neg,dim=0)
 
         # select a negative text for each image
         text_ids_neg = []
@@ -227,11 +227,11 @@ class BLIP_Pretrain(nn.Module):
             text_ids_neg.append(encoder_input_ids[neg_idx])
             text_atts_neg.append(text.attention_mask[neg_idx])
 
-        text_ids_neg = torch.stack(text_ids_neg,dim=0)   
-        text_atts_neg = torch.stack(text_atts_neg,dim=0)      
+        text_ids_neg = torch.stack(text_ids_neg,dim=0)
+        text_atts_neg = torch.stack(text_atts_neg,dim=0)
 
-        text_ids_all = torch.cat([encoder_input_ids, text_ids_neg],dim=0)     
-        text_atts_all = torch.cat([text.attention_mask, text_atts_neg],dim=0)     
+        text_ids_all = torch.cat([encoder_input_ids, text_ids_neg],dim=0)
+        text_atts_all = torch.cat([text.attention_mask, text_atts_neg],dim=0)
 
         image_embeds_all = torch.cat([image_embeds_neg,image_embeds],dim=0)
         image_atts_all = torch.cat([image_atts,image_atts],dim=0)
@@ -239,50 +239,50 @@ class BLIP_Pretrain(nn.Module):
         output_neg = self.text_encoder(text_ids_all,
                                        attention_mask = text_atts_all,
                                        encoder_hidden_states = image_embeds_all,
-                                       encoder_attention_mask = image_atts_all,      
+                                       encoder_attention_mask = image_atts_all,
                                        return_dict = True,
-                                      )                            
+                                      )
 
         vl_embeddings = torch.cat([output_pos.last_hidden_state[:,0,:], output_neg.last_hidden_state[:,0,:]],dim=0)
-        vl_output = self.itm_head(vl_embeddings)            
+        vl_output = self.itm_head(vl_embeddings)
 
         itm_labels = torch.cat([torch.ones(bs,dtype=torch.long),torch.zeros(2*bs,dtype=torch.long)],
                                dim=0).to(image.device)
-        loss_itm = F.cross_entropy(vl_output, itm_labels)  
-        
-        ##================= LM ========================##     
-        decoder_input_ids = text.input_ids.clone()      
+        loss_itm = F.cross_entropy(vl_output, itm_labels)
+
+        ##================= LM ========================##
+        decoder_input_ids = text.input_ids.clone()
         decoder_input_ids[:,0] = self.tokenizer.bos_token_id
-        decoder_targets = decoder_input_ids.masked_fill(decoder_input_ids == self.tokenizer.pad_token_id, -100) 
+        decoder_targets = decoder_input_ids.masked_fill(decoder_input_ids == self.tokenizer.pad_token_id, -100)
 
-        decoder_output = self.text_decoder(decoder_input_ids, 
-                                           attention_mask = text.attention_mask, 
+        decoder_output = self.text_decoder(decoder_input_ids,
+                                           attention_mask = text.attention_mask,
                                            encoder_hidden_states = image_embeds,
-                                           encoder_attention_mask = image_atts,                  
+                                           encoder_attention_mask = image_atts,
                                            labels = decoder_targets,
-                                           return_dict = True,   
-                                          )   
-          
-        loss_lm = decoder_output.loss                
+                                           return_dict = True,
+                                          )
+
+        loss_lm = decoder_output.loss
         return loss_ita, loss_itm, loss_lm
- 
 
 
-    @torch.no_grad()    
+
+    @torch.no_grad()
     def copy_params(self):
-        for model_pair in self.model_pairs:           
+        for model_pair in self.model_pairs:
             for param, param_m in zip(model_pair[0].parameters(), model_pair[1].parameters()):
                 param_m.data.copy_(param.data)  # initialize
-                param_m.requires_grad = False  # not update by gradient    
+                param_m.requires_grad = False  # not update by gradient
 
-            
-    @torch.no_grad()        
+
+    @torch.no_grad()
     def _momentum_update(self):
-        for model_pair in self.model_pairs:           
+        for model_pair in self.model_pairs:
             for param, param_m in zip(model_pair[0].parameters(), model_pair[1].parameters()):
                 param_m.data = param_m.data * self.momentum + param.data * (1. - self.momentum)
 
-                        
+
     @torch.no_grad()
     def _dequeue_and_enqueue(self, image_feat, text_feat):
         # gather keys before updating queue
@@ -299,12 +299,12 @@ class BLIP_Pretrain(nn.Module):
         self.text_queue[:, ptr:ptr + batch_size] = text_feats.T
         ptr = (ptr + batch_size) % self.queue_size  # move pointer
 
-        self.queue_ptr[0] = ptr 
+        self.queue_ptr[0] = ptr
 
 
 def blip_pretrain(**kwargs):
     model = BLIP_Pretrain(**kwargs)
-    return model 
+    return model
 
 
 @torch.no_grad()
@@ -322,7 +322,7 @@ def concat_all_gather(tensor):
         for _ in range(torch.distributed.get_world_size())]
     torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
     output = torch.cat(tensors_gather, dim=0)
-    return output     
+    return output
 
 
 from typing import List
@@ -349,8 +349,8 @@ def tie_encoder_decoder_weights(encoder: nn.Module, decoder: nn.Module, base_mod
             encoder_pointer.weight = decoder_pointer.weight
             if hasattr(decoder_pointer, "bias"):
                 assert hasattr(encoder_pointer, "bias")
-                encoder_pointer.bias = decoder_pointer.bias                
-            print(module_name+' is tied')    
+                encoder_pointer.bias = decoder_pointer.bias
+            print(module_name+' is tied')
             return
 
         encoder_modules = encoder_pointer._modules
@@ -395,4 +395,4 @@ def tie_encoder_decoder_weights(encoder: nn.Module, decoder: nn.Module, base_mod
             uninitialized_encoder_weights += list(all_encoder_weights)
 
     # tie weights recursively
-    tie_encoder_to_decoder_recursively(decoder, encoder, base_model_prefix, uninitialized_encoder_weights, skip_key)  
+    tie_encoder_to_decoder_recursively(decoder, encoder, base_model_prefix, uninitialized_encoder_weights, skip_key)

@@ -1,17 +1,21 @@
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from omegaconf import DictConfig, OmegaConf
-from model import BLIPLightningModule
+import os
+
 import pytorch_lightning as pl
 import torch
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+
 from data_utils import create_dataset, create_loader
+from model import BLIPLightningModule
+
+
 def main(config: DictConfig):
     pl.seed_everything(config.seed, workers=True)
     torch.backends.cudnn.benchmark = True
 
     print("Creating dataset")
     dataset = create_dataset(config.dataset, min_scale=0.2)
-    print("number of training samples: %d" % len(dataset))
-
+    print(f"number of training samples: {len(dataset)}")
 
     data_loader = create_loader(
         [dataset],
@@ -25,26 +29,47 @@ def main(config: DictConfig):
     print("Creating model")
     module = BLIPLightningModule(config.model)
 
+    checkpoint_cb = ModelCheckpoint(
+        dirpath=config.output_dir,
+        filename="blip-{epoch:02d}",
+        save_top_k=-1,
+        every_n_epochs=1,
+        save_last=True,
+        save_on_train_epoch_end=True,
+        monitor=None,
+        verbose=True,
+    )
+
     trainer = pl.Trainer(
         fast_dev_run=config.fast_dev_run,
         max_epochs=config.max_epoch,
         accelerator=config.accelerator,
         devices=config.devices,
-        strategy="ddp" if (isinstance(config.devices, int) and config.devices > 1) or config.devices == -1 else "auto",
+        strategy="ddp"
+        if (isinstance(config.devices, int) and config.devices > 1) or config.devices == -1
+        else "auto",
         precision=config.precision,
         use_distributed_sampler=True,
         log_every_n_steps=50,
         default_root_dir=config.output_dir,
         callbacks=[
-            ModelCheckpoint(
-                dirpath=config.output_dir,
-                filename="blip-{epoch:02d}",
-                save_top_k=-1,
-                every_n_epochs=1,
-            ),
+            checkpoint_cb,
             LearningRateMonitor(logging_interval="step"),
         ],
         logger=pl.loggers.TensorBoardLogger(save_dir=config.output_dir, name=""),
+    )
+
+    last_ckpt = os.path.join(config.output_dir, "last.ckpt")
+    ckpt_path = last_ckpt if os.path.exists(last_ckpt) else None
+    if ckpt_path:
+        print(f"[resume] found {ckpt_path}, resuming training")
+    else:
+        print("[resume] no checkpoint found, starting from scratch")
+
+    trainer.fit(
+        module,
+        train_dataloaders=data_loader,
+        ckpt_path=ckpt_path,
     )
 
     trainer.fit(module, train_dataloaders=data_loader)
