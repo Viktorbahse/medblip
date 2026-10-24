@@ -45,7 +45,7 @@ def main(config: DictConfig):
         max_epochs=config.max_epoch,
         accelerator=config.accelerator,
         devices=config.devices,
-        strategy="ddp"
+        strategy="ddp_find_unused_parameters_true"
         if (isinstance(config.devices, int) and config.devices > 1) or config.devices == -1
         else "auto",
         precision=config.precision,

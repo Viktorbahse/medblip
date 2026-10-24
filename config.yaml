@@ -2,12 +2,12 @@ pretrain:
   seed: 42
   img_size: 224
   precision: 32-true
-  fast_dev_run: True
+  fast_dev_run: False
   dataset:
     img_root: dataset/flickr30k
     img_size: ${pretrain.img_size}
     train_file: ["dataset/flickr30k/train.json"]
-  batch_size: 4
+  batch_size: 32
   model:
     img_size: ${pretrain.img_size}
     vit: base
@@ -24,6 +24,6 @@ pretrain:
     med_config: "Original_BLIP/bert_config.json"
 
   max_epoch: 10
-  accelerator: cpu
-  devices: 1
+  accelerator: gpu
+  devices: 2
   output_dir: output/pretrain
