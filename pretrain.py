@@ -2,43 +2,11 @@ import os
 
 import pytorch_lightning as pl
 import torch
-from omegaconf import DictConfig, ListConfig, OmegaConf
-from omegaconf.base import ContainerMetadata, Metadata
-from omegaconf.nodes import (
-    AnyNode,
-    BooleanNode,
-    BytesNode,
-    EnumNode,
-    FloatNode,
-    IntegerNode,
-    PathNode,
-    StringNode,
-)
+from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 
 from data_utils import create_dataset, create_loader
 from model import BLIPLightningModule
-
-torch.serialization.add_safe_globals(
-    [
-        DictConfig,
-        ListConfig,
-        ContainerMetadata,
-        Metadata,
-        AnyNode,
-        BooleanNode,
-        BytesNode,
-        EnumNode,
-        FloatNode,
-        IntegerNode,
-        PathNode,
-        StringNode,
-        list,
-        dict,
-        tuple,
-        set,
-    ]
-)
 
 
 def main(config: DictConfig):
@@ -53,7 +21,7 @@ def main(config: DictConfig):
         [dataset],
         [None],
         batch_size=[config.batch_size],
-        num_workers=[4],
+        num_workers=[config.num_workers],
         is_trains=[True],
         collate_fns=[None],
     )[0]
@@ -64,7 +32,7 @@ def main(config: DictConfig):
     checkpoint_cb = ModelCheckpoint(
         dirpath=config.output_dir,
         filename="blip-{epoch:02d}",
-        save_top_k=0,
+        save_top_k=1,
         every_n_epochs=1,
         save_last=True,
         save_on_train_epoch_end=True,
@@ -88,7 +56,7 @@ def main(config: DictConfig):
             checkpoint_cb,
             LearningRateMonitor(logging_interval="step"),
         ],
-        logger=pl.loggers.TensorBoardLogger(save_dir=config.output_dir, name=""),
+        logger=pl.loggers.TensorBoardLogger(save_dir=config.output_dir, name="", version=0),
     )
 
     last_ckpt = os.path.join(config.output_dir, "last.ckpt")
@@ -102,6 +70,7 @@ def main(config: DictConfig):
         module,
         train_dataloaders=data_loader,
         ckpt_path=ckpt_path,
+        weights_only=False,
     )
 
 
