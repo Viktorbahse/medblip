@@ -26,10 +26,27 @@ pretrain:
     warmup_lr: 1e-6
     lr_decay_rate: 0.9
     warmup_steps: 500
-
+    k_test: 128
+    num_beams: 3
+    max_length: 20
+    min_length: 5
     med_config: "Original_BLIP/bert_config.json"
 
   max_epoch: 20
   accelerator: gpu
   devices: 1
   output_dir: output/pretrain_0
+test:
+  seed: 42
+  ckpt_path: output/pretrain_0/blip-epoch=19.ckpt
+  model: ${pretrain.model}
+  dataset:
+    img_root: ${pretrain.dataset.img_root}
+    img_size: ${pretrain.dataset.img_size}
+    test_file: "dataset/flickr30k/test.json"
+  batch_size: 32
+  num_workers: 16
+  accelerator: gpu
+  devices: 1
+  precision: ${pretrain.precision}
+  tests: ['retrieval', 'caption']

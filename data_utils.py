@@ -61,7 +61,45 @@ class pretrain_dataset(Dataset):
         return image, caption
 
 
-def create_dataset(config, min_scale=0.5):
+class RetrievalEvalDataset(Dataset):
+    def __init__(self, ann_file, transform, image_root=None):
+        with open(ann_file) as f:
+            self.annotation = json.load(f)
+
+        self.transform = transform
+        self.image_root = image_root
+
+        self.text = []
+        self.image = []
+        self.txt2img = {}
+        self.img2txt = {}
+
+        txt_id = 0
+        for img_id, ann in enumerate(self.annotation):
+            self.image.append(ann["image"])
+            self.img2txt[img_id] = []
+            for caption in ann["captions"]:
+                self.text.append(pre_caption(caption, 30))
+                self.img2txt[img_id].append(txt_id)
+                self.txt2img[txt_id] = img_id
+                txt_id += 1
+
+    def __len__(self):
+        return len(self.annotation)
+
+    def __getitem__(self, index):
+        ann = self.annotation[index]
+        image_path = ann["image"]
+        if self.image_root is not None:
+            image_path = os.path.join(self.image_root, image_path)
+
+        image = Image.open(image_path).convert("RGB")
+        image = self.transform(image)
+
+        return image, index
+
+
+def create_dataset(config, min_scale=0.5, type="pretrain"):
     normalize = transforms.Normalize(
         (0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)
     )
@@ -92,7 +130,7 @@ def create_dataset(config, min_scale=0.5):
             normalize,
         ]
     )
-    """
+
     transform_test = transforms.Compose(
         [
             transforms.Resize(
@@ -102,8 +140,10 @@ def create_dataset(config, min_scale=0.5):
             normalize,
         ]
     )
-    """
-    dataset = pretrain_dataset(config.train_file, transform_train, image_root=config.img_root)
+    if type == "pretrain":
+        dataset = pretrain_dataset(config.train_file, transform_train, image_root=config.img_root)
+    else:
+        dataset = RetrievalEvalDataset(config.test_file, transform_test, image_root=config.img_root)
     return dataset
 
 
@@ -130,3 +170,9 @@ def create_loader(datasets, samplers, batch_size, num_workers, is_trains, collat
         )
         loaders.append(loader)
     return loaders
+
+
+def build_caption_refs(ann_file):
+    with open(ann_file) as f:
+        ann = json.load(f)
+    return {str(i): [pre_caption(c, 30) for c in a["captions"]] for i, a in enumerate(ann)}
