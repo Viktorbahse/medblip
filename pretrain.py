@@ -2,11 +2,43 @@ import os
 
 import pytorch_lightning as pl
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf.base import ContainerMetadata, Metadata
+from omegaconf.nodes import (
+    AnyNode,
+    BooleanNode,
+    BytesNode,
+    EnumNode,
+    FloatNode,
+    IntegerNode,
+    PathNode,
+    StringNode,
+)
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 
 from data_utils import create_dataset, create_loader
 from model import BLIPLightningModule
+
+torch.serialization.add_safe_globals(
+    [
+        DictConfig,
+        ListConfig,
+        ContainerMetadata,
+        Metadata,
+        AnyNode,
+        BooleanNode,
+        BytesNode,
+        EnumNode,
+        FloatNode,
+        IntegerNode,
+        PathNode,
+        StringNode,
+        list,
+        dict,
+        tuple,
+        set,
+    ]
+)
 
 
 def main(config: DictConfig):
@@ -32,7 +64,7 @@ def main(config: DictConfig):
     checkpoint_cb = ModelCheckpoint(
         dirpath=config.output_dir,
         filename="blip-{epoch:02d}",
-        save_top_k=-1,
+        save_top_k=0,
         every_n_epochs=1,
         save_last=True,
         save_on_train_epoch_end=True,
@@ -71,8 +103,6 @@ def main(config: DictConfig):
         train_dataloaders=data_loader,
         ckpt_path=ckpt_path,
     )
-
-    trainer.fit(module, train_dataloaders=data_loader)
 
 
 if __name__ == "__main__":
