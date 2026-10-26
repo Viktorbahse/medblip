@@ -190,7 +190,14 @@ class BLIPRetrieval(LightningModule):
             dataset.txt2img,
             dataset.img2txt,
         )
-        self.log_dict({f"test/{k_}": v for k_, v in result.items()})
+        boot = self._bootstrap_retrieval(
+            score_i2t.cpu().numpy(),
+            score_t2i.cpu().numpy(),
+            dataset.txt2img,
+            dataset.img2txt,
+            n_boot=self.config.get("n_boot", 1000),
+        )
+        self.log_dict({f"test/{k_}": v for k_, v in {**result, **boot}.items()})
 
     @staticmethod
     def _itm_eval(scores_i2t, scores_t2i, txt2img, img2txt):
@@ -223,6 +230,50 @@ class BLIPRetrieval(LightningModule):
             "img_r5": ir5,
             "img_r10": ir10,
         }
+
+    @staticmethod
+    def _bootstrap_retrieval(scores_i2t, scores_t2i, txt2img, img2txt, n_boot=1000, seed=42):
+        """Bootstrap CI для r@1/5/10 (i2t и t2i)."""
+        rng = np.random.default_rng(seed)
+        n_i = scores_i2t.shape[0]
+        n_t = scores_t2i.shape[0]
+
+        # заранее считаем rank каждого запроса
+        rank_i2t = np.empty(n_i)
+        for idx, score in enumerate(scores_i2t):
+            inds = np.argsort(score)[::-1]
+            r = 1e20
+            for i in img2txt[idx]:
+                tmp = np.where(inds == i)[0][0]
+                if tmp < r:
+                    r = tmp
+            rank_i2t[idx] = r
+
+        rank_t2i = np.empty(n_t)
+        for idx, score in enumerate(scores_t2i):
+            inds = np.argsort(score)[::-1]
+            rank_t2i[idx] = np.where(inds == txt2img[idx])[0][0]
+
+        stats = {k: [] for k in ["txt_r1", "txt_r5", "txt_r10", "img_r1", "img_r5", "img_r10"]}
+        for _ in range(n_boot):
+            bi = rng.integers(0, n_i, n_i)
+            bt = rng.integers(0, n_t, n_t)
+            ri = rank_i2t[bi]
+            rt = rank_t2i[bt]
+            stats["txt_r1"].append(100.0 * np.mean(ri < 1))
+            stats["txt_r5"].append(100.0 * np.mean(ri < 5))
+            stats["txt_r10"].append(100.0 * np.mean(ri < 10))
+            stats["img_r1"].append(100.0 * np.mean(rt < 1))
+            stats["img_r5"].append(100.0 * np.mean(rt < 5))
+            stats["img_r10"].append(100.0 * np.mean(rt < 10))
+
+        out = {}
+        for k, v in stats.items():
+            v = np.asarray(v)
+            out[f"{k}_ci_lo"] = float(np.percentile(v, 2.5))
+            out[f"{k}_ci_hi"] = float(np.percentile(v, 97.5))
+            out[f"{k}_std"] = float(v.std())
+        return out
 
 
 class BLIPCaption(LightningModule):
