@@ -159,8 +159,6 @@ def process_file(model, file_path, image_root, transform, config):
     with open(file_path) as f:
         data = json.load(f)
 
-    data = data[:10]
-
     dataset = CapFiltDataset(data, transform, image_root=image_root)
     loader = DataLoader(
         dataset,

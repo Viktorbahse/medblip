@@ -56,8 +56,8 @@ capfilt:
   ckpt_path: ${test.ckpt_path}
   image_root: ${pretrain.dataset.img_root}
   seed: 42
-  batch_size: 4
-  num_workers: 4
+  batch_size: 32
+  num_workers: 16
   num_generated: 2
   max_captions: 4
-  device: cpu
+  device: gpu
