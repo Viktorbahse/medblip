@@ -11,7 +11,8 @@ pretrain:
 
   batch_size: 128
   num_workers: 16
-
+  init_ckpt: output/pretrain_0/blip-epoch=19.ckpt
+  resume_ckpt: null
   model:
     img_size: ${pretrain.img_size}
     vit: base
@@ -60,4 +61,4 @@ capfilt:
   num_workers: 16
   num_generated: 2
   max_captions: 4
-  device: gpu
+  device: cuda

@@ -29,6 +29,12 @@ def main(config: DictConfig):
     print("Creating model")
     module = BLIPLightningModule(config.model)
 
+    # --- warm-start: только веса, fresh optimizer/scheduler ---
+    init_ckpt = config.get("init_ckpt", None)
+    if init_ckpt:
+        print(f"[init_ckpt] warm-start from {init_ckpt}")
+        module.init_weights_from_checkpoint(init_ckpt)
+
     checkpoint_cb = ModelCheckpoint(
         dirpath=config.output_dir,
         filename="blip-{epoch:02d}",
@@ -59,17 +65,21 @@ def main(config: DictConfig):
         logger=pl.loggers.TensorBoardLogger(save_dir=config.output_dir, name="", version=0),
     )
 
-    last_ckpt = os.path.join(config.output_dir, "last.ckpt")
-    ckpt_path = last_ckpt if os.path.exists(last_ckpt) else None
-    if ckpt_path:
-        print(f"[resume] found {ckpt_path}, resuming training")
+    # --- full resume ---
+    resume_ckpt = config.get("resume_ckpt", None)
+    if resume_ckpt is None:
+        last_ckpt = os.path.join(config.output_dir, "last.ckpt")
+        resume_ckpt = last_ckpt if os.path.exists(last_ckpt) else None
+
+    if resume_ckpt:
+        print(f"[resume] {resume_ckpt}")
     else:
-        print("[resume] no checkpoint found, starting from scratch")
+        print("[resume] none — start from scratch (or warm-start above)")
 
     trainer.fit(
         module,
         train_dataloaders=data_loader,
-        ckpt_path=ckpt_path,
+        ckpt_path=resume_ckpt,
         weights_only=False,
     )
 

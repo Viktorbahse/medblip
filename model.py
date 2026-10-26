@@ -24,6 +24,38 @@ class BLIPLightningModule(LightningModule):
             queue_size=self.config.queue_size,
         )
 
+    def init_weights_from_checkpoint(self, ckpt_path: str, strict: bool = False) -> None:
+        """
+        Warm-start: загружает ТОЛЬКО веса модели из чекпоинта.
+        Optimizer / LR-scheduler / epoch НЕ восстанавливаются — обучение
+        стартует «с нуля» по расписанию, но с предобученными весами.
+
+        Поддерживает:
+          * чекпоинты BLIPLightningModule / BLIPCaption / BLIPRetrieval
+            (ключи вида "model.visual_encoder....");
+          * «голые» state_dict от blip_pretrain (ключи "visual_encoder....").
+        """
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state = ckpt.get("state_dict", ckpt)
+
+        # Если ключи не обёрнуты в "model." — оборачиваем
+        keys = list(state.keys())
+        if keys and not keys[0].startswith("model."):
+            state = {f"model.{k}": v for k, v in state.items()}
+
+        missing, unexpected = self.load_state_dict(state, strict=strict)
+
+        n_loaded = len(state) - len(unexpected)
+        print(
+            f"[init_ckpt] {ckpt_path}\n"
+            f"  loaded={n_loaded}/{len(state)} "
+            f"missing={len(missing)} unexpected={len(unexpected)}"
+        )
+        if missing:
+            print(f"  missing[:5]    = {missing[:5]}{' ...' if len(missing) > 5 else ''}")
+        if unexpected:
+            print(f"  unexpected[:5] = {unexpected[:5]}{' ...' if len(unexpected) > 5 else ''}")
+
     def forward(self, image, caption, alpha):
         return self.model(image, caption, alpha=alpha)
 
