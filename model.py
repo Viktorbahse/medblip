@@ -346,22 +346,89 @@ class BLIPCaption(LightningModule):
             self._preds[str(i)] = [c.strip()]
 
     def on_test_epoch_end(self):
-        from pycocoevalcap.bleu.bleu import Bleu
-        from pycocoevalcap.cider.cider import Cider
-
         assert self._refs is not None, "refs not loaded: pass test_file to __init__"
         preds = self._preds
         refs = {k: v for k, v in self._refs.items() if k in preds}
 
-        bleu_score, _ = Bleu(4).compute_score(refs, preds)
-        cider_score, _ = Cider().compute_score(refs, preds)
+        if hasattr(self.config, "get"):
+            n_boot = self.config.get("n_boot", 1000)
+        else:  # argparse.Namespace и т.п.
+            n_boot = getattr(self.config, "n_boot", 1000)
 
-        self.log_dict(
-            {
-                "test/Bleu_1": float(bleu_score[0]) * 100,
-                "test/Bleu_2": float(bleu_score[1]) * 100,
-                "test/Bleu_3": float(bleu_score[2]) * 100,
-                "test/Bleu_4": float(bleu_score[3]) * 100,
-                "test/CIDEr": float(cider_score) * 100,
-            }
-        )
+        res = self._bootstrap_caption(preds, refs, n_boot=n_boot)
+        self.log_dict({f"test/{k_}": v for k_, v in res.items()})
+
+    def _bootstrap_caption(self, preds, refs, n_boot=1000, seed=42):
+        """
+        95% percentile bootstrap CI для caption-метрик в «статейном» виде:
+
+        * Bleu_1..Bleu_4 — corpus BLEU (агрегация n-грамм по всему корпусу,
+            как возвращает Bleu(4).compute_score по умолчанию). Совпадает с
+            числами из BLIP/ALBEF/COCO eval.
+            CI: ресэмпл ключей с возвращением + пересчёт corpus BLEU
+            на каждой подвыборке. Corpus BLEU — нелинейная функция от
+            агрегатов, поэтому пересчёт обязателен.
+
+        * CIDEr — corpus CIDEr = mean(per-image CIDEr), IDF фиксируются
+            на полном refs при первом вызове Cider().compute_score.
+            CI: бутстрэп среднего per-image CIDEr. Это статистически
+            эквивалентно «corpus CIDEr на подвыборке», но без ошибочного
+            пересчёта IDF внутри подвыборок (pycocoevalcap так делает,
+            если вызвать compute_score на ресэмпле).
+        """
+        from pycocoevalcap.bleu.bleu import Bleu
+        from pycocoevalcap.cider.cider import Cider
+
+        # 0. Согласуем ключи
+        common_keys = [k for k in preds if k in refs]
+        assert common_keys, "no common keys between preds and refs"
+        n = len(common_keys)
+        rng = np.random.default_rng(seed)
+
+        # 1. Точечные оценки на полном наборе (как в статьях)
+        bleu_corpus, _ = Bleu(4).compute_score(refs, preds)  # [b1,b2,b3,b4], %
+        cider_corpus, cider_per_image_dict = Cider().compute_score(refs, preds)  # float, %
+
+        bleu_point = np.asarray(bleu_corpus, dtype=float) * 100.0
+        cider_point = float(cider_corpus) * 100.0
+
+        # per-image CIDEr, выровненный по common_keys.
+        # IDF этих значений зафиксированы на полном refs — это и нужно.
+        cider_per_image = np.array(
+            [float(cider_per_image_dict[k]) for k in common_keys], dtype=float
+        )  # [N], доли (не %)
+
+        # 2. Bootstrap
+        bleu_boots = np.empty((n_boot, 4))
+        cider_boots = np.empty(n_boot)
+
+        for i in range(n_boot):
+            idx = rng.integers(0, n, n)  # выборка с возвращением
+
+            # 2a. Corpus BLEU — пересчитываем на подвыборке.
+            #     ВАЖНО: используем целочисленные ключи, чтобы повторяющиеся
+            #     индексы не «схлопнулись» в dict (иначе бутстрэп будет
+            #     некорректным — потеряются веса дубликатов).
+            p_sub = {j: preds[common_keys[idx[j]]] for j in range(n)}
+            r_sub = {j: refs[common_keys[idx[j]]] for j in range(n)}
+            b, _ = Bleu(4).compute_score(r_sub, p_sub)
+            bleu_boots[i] = np.asarray(b, dtype=float) * 100.0
+
+            # 2b. CIDEr: CIDEr_corpus = mean(per-image CIDEr) с фиксированными IDF.
+            #     Бутстрэп среднего = CI для corpus CIDEr, без пересчёта IDF.
+            cider_boots[i] = cider_per_image[idx].mean() * 100.0
+
+        # 3. Собираем результат
+        out = {}
+        for j, name in enumerate(["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]):
+            out[name] = float(bleu_point[j])
+            out[f"{name}_ci_lo"] = float(np.percentile(bleu_boots[:, j], 2.5))
+            out[f"{name}_ci_hi"] = float(np.percentile(bleu_boots[:, j], 97.5))
+            out[f"{name}_std"] = float(bleu_boots[:, j].std())
+
+        out["CIDEr"] = cider_point
+        out["CIDEr_ci_lo"] = float(np.percentile(cider_boots, 2.5))
+        out["CIDEr_ci_hi"] = float(np.percentile(cider_boots, 97.5))
+        out["CIDEr_std"] = float(cider_boots.std())
+
+        return out
