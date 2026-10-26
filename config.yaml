@@ -50,3 +50,14 @@ test:
   devices: 1
   precision: ${pretrain.precision}
   tests: ['retrieval', 'caption']
+capfilt:
+  files: ["dataset/flickr30k/test.json", "dataset/flickr30k/train.json", "dataset/flickr30k/val.json"]
+  model: ${pretrain.model}
+  ckpt_path: ${test.ckpt_path}
+  image_root: ${pretrain.dataset.img_root}
+  seed: 42
+  batch_size: 4
+  num_workers: 4
+  num_generated: 2
+  max_captions: 4
+  device: cpu
